@@ -2,6 +2,8 @@ import psycopg2
 from pprint import pprint
 
 def create_db(conn):
+    """Эта функция нужна для того, чтобы создать таблицы в базу данных"""
+
     cur = conn.cursor()
     cur.execute("""
         DROP TABLE IF EXISTS phone_number;
@@ -24,37 +26,25 @@ def create_db(conn):
             id_client int not null references client(id_client)
             );
     """)
-    print('Done! create_db')
     conn.commit()
     cur.close()
 
-def add_client_and_phone_number(conn, name, surname, mail, *args):
-    global count_phone, count_client
+def add_client(conn, name=None, surname=None, mail=None):
+    """Эта функция нужна для того, чтобы добавить записи в поля таблицы 'client'"""
+
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO client (id_client, name, surname, mail) 
+        INSERT INTO client (name, surname, mail) 
         VALUES
-            ({0}, '{1}', '{2}', '{3}');
-    """.format(count_client, name, surname, mail))
+            ('{0}', '{1}', '{2}');
+    """.format(name, surname, mail))
 
-
-    if len(args) >= 1:
-        for i in args:
-            cur.execute("""
-                    INSERT INTO phone_number (id_phone_number, phone_number, id_client)
-                    VALUES
-                        ({0}, '{1}', {2}) RETURNING id_phone_number, phone_number, id_client;
-                """.format(count_phone, i, count_client))
-            count_phone += 1
-            print('Done! add_phone_number')
-            print(cur.fetchall())
-            print('Done! add_client')
-
-    count_client += 1
     conn.commit()
     cur.close()
 
-def add_now_client_phone(conn, find_name):
+def add_now_client_phone(conn, find_name, *args):
+    """Эта функция нужна для того,чтобы добавить записи в поля таблицы 'phone_number'"""
+
     cur = conn.cursor()
 
     cur.execute("""
@@ -62,72 +52,149 @@ def add_now_client_phone(conn, find_name):
         from client c
         where c.name = '{0}'
     """.format(find_name))
-    find_id = cur.fetchall()[0][0]
+    try:
+        find_id = cur.fetchall()[0][0]
 
-    cur.execute("""
-        UPDATE phone_number
-        SET 
-    """)
+        if len(args) >= 1:
+            for phone_number in args:
+                cur.execute("""
+                        INSERT INTO phone_number (phone_number, id_client)
+                        VALUES
+                        ({0}, '{1}') RETURNING id_phone_number, phone_number, id_client
+                    """.format(phone_number, find_id))
+        else:
+            print('Нет номера телефона')
+    except:
+        print('Ошибка при нахождении записи под таким индексом')
 
     conn.commit()
     cur.close()
 
-def update_client(conn, id, name, surname, mail):
+def update_client(conn, id, name=None, surname=None, mail=None):
+    """Эта функция нужна для обновления записи в таблицы 'client'"""
+
     cur = conn.cursor()
 
     cur.execute("""
         UPDATE client SET name='{0}', surname='{1}', mail='{2}' WHERE client.id_client = {3} ;
     """.format(name, surname, mail, id))
-    print('Done! update_client')
 
     conn.commit()
     cur.close()
 
-def update_phone_number():
+def delete_client_phone(conn, find_phone_number):
+    """Эта функция нужна для удаления уже существующего номера телефона клиента"""
 
-    cur.execute("""
-        UPDATE phone_number SET phone_number=%s;
-    """, ('89286662232',))
-    print('Done! update_phone_number')
-    conn.commit()
-
-def delete_client():
-    cur.execute("""
-        DELETE
-        FROM phone_number pn
-        WHERE pn.id_client=%s;
-    """, (1,))
-
-    cur.execute("""
-            DELETE
-            FROM client c
-            WHERE c.id_client=%s;
-        """, (1,))
-
-    print('Done! delete_client')
-    conn.commit()
-
-def find_client(conn):
     cur = conn.cursor()
+
     cur.execute("""
-        SELECT *
-        FROM client c join phone_number pn on c.id_client = pn.id_client 
-        WHERE c.id_client = 2
-    """)
-    pprint(cur.fetchall())
+            select pn.id_phone_number 
+            from phone_number pn 
+            where pn.phone_number = '{0}'
+        """.format(find_phone_number))
+    try:
+        find_id = cur.fetchall()[0][0]
+        cur.execute("""
+                DELETE
+                FROM phone_number pn
+                WHERE pn.id_phone_number = %s
+            """, (find_id,))
+        conn.commit()
+        cur.close()
+    except:
+        print("Ошибка при нахождении записи в таблице 'phone_number', возможно неверно указано имя поля записи")
+
+def delete_client(conn, find_client):
+    """Эта функция удаляет запись в таблице 'client' и все связанные записи с ней"""
+
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+                    select pn.id_phone_number
+                    from phone_number pn  
+                    where pn.id_client = (select c.id_client
+                                          from client c
+                                          where c.name = '{0}')
+                """.format(find_client))
+        find_id = ()
+        if find_id is None:
+            for number in cur.fetchall():
+                find_id += number
+
+
+            cur.execute("""
+                delete
+                from phone_number pn
+                where pn.id_phone_number in {0}
+                    """.format(find_id))
+        cur.execute("""
+            select c.id_client
+            from client c
+            where c.name = '{0}'
+        """.format(find_client))
+        find_id_client = cur.fetchall()[0][0]
+        cur.execute("""
+            delete
+            from client c
+            where c.id_client = {0}
+        """.format(find_id_client))
+        conn.commit()
+        cur.close()
+    except:
+        print("Ошибка при удалении клиента в таблице 'client'")
+
+def find_client(conn, name=None, surname=None, mail=None, phone_number=None):
+    cur = conn.cursor()
+    info = None
+    if name is not None:
+        cur.execute("""
+            select c.name, c.surname, c.mail, pn.phone_number 
+            from client c join phone_number pn on pn.id_client = c.id_client 
+            where c.name = '{0}'
+        """.format(name))
+        info = cur.fetchall()
+    elif surname is not None:
+        cur.execute("""
+            select c.name, c.surname, c.mail, pn.phone_number 
+            from client c join phone_number pn on pn.id_client = c.id_client 
+            where c.surname = '{0}'
+        """.format(surname))
+        info = cur.fetchall()
+    elif mail is not None:
+        cur.execute("""
+            select c.name, c.surname, c.mail, pn.phone_number 
+            from client c join phone_number pn on pn.id_client = c.id_client 
+            where c.mail = '{0}'
+        """.format(surname))
+        info = cur.fetchall()
+    elif phone_number is not None:
+        cur.execute("""
+            select c.name, c.surname, c.mail, pn.phone_number 
+            from client c join phone_number pn on pn.id_client = c.id_client 
+            where pn.phone_number = '{0}'
+        """.format(surname))
+        info = cur.fetchall()
+    else:
+        print('Запись не найдена')
+
+    print(info)
     conn.commit()
     cur.close()
 
 if __name__ == '__main__':
-    count_phone = 1
-    count_client = 1
-    with psycopg2.connect(database="python_test", user='postgres', password='Wew019283746556') as conn:
+
+    with psycopg2.connect(database="python_test", user='', password='') as conn:
         create_db(conn)
-        add_client_and_phone_number(conn, 'Bob', 'Booble', 'Bob64@gmail.com', '89288880809', '89288881111')
-        add_client_and_phone_number(conn, 'Vova', 'Booble', 'Bob64@gmail.com', '89288882222')
+
+        add_client(conn, 'Bob', 'Booble', 'Bob64@gmail.com')
+        add_client(conn, 'Vova', 'Booble', 'Bob64@gmail.com')
+
         update_client(conn, 2, 'igor', 'pop', 'pop@gmail.com')
-        add_now_client_phone(conn, 'igor')
+
+        add_now_client_phone(conn, 'igor', '89288880809', '89288881111')
+        add_now_client_phone(conn, 'Bob', '89288882222')
+
+        delete_client_phone(conn, '89288882222')
+        delete_client(conn, 'Bob')
+
         find_client(conn)
-
-
-
